@@ -1,25 +1,51 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const formatTime = (seconds) => {
+  if (!seconds) return '0:00';
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
 };
 
+const readStoredUser = () => {
+  try {
+    const value = localStorage.getItem('spotify-lite-user');
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+};
+
+const readStoredToken = () => localStorage.getItem('spotify-lite-token') || '';
+
 export default function App() {
-  const [user, setUser] = useState({ name: 'Guest', plan: 'Free' });
+  const [user, setUser] = useState(readStoredUser());
+  const [token, setToken] = useState(readStoredToken());
+  const [authMode, setAuthMode] = useState('login');
+  const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [tracks, setTracks] = useState([]);
   const [playlists, setPlaylists] = useState([]);
   const [search, setSearch] = useState('');
   const [currentTrack, setCurrentTrack] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('');
+  const [stats, setStats] = useState({ totalTracks: 0, totalUsers: 0, uploadedByUser: 0 });
+  const [uploadForm, setUploadForm] = useState({ title: '', artist: '', album: '', genre: '' });
+  const [uploadFile, setUploadFile] = useState(null);
 
-  const fetchData = async (query = '') => {
+  const fetchTracks = async (query = '') => {
     setLoading(true);
     const url = query ? `/api/search?q=${encodeURIComponent(query)}` : '/api/tracks';
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load tracks');
+    }
+
     const data = await response.json();
-    setTracks(Array.isArray(data.tracks) ? data.tracks : []);
+    setTracks(data.tracks || []);
     setLoading(false);
   };
 
@@ -29,37 +55,186 @@ export default function App() {
     setPlaylists(data.playlists || []);
   };
 
+  const fetchDashboard = async () => {
+    if (!token) return;
+    const response = await fetch('/api/dashboard', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    setStats(data.stats || { totalTracks: 0, totalUsers: 0, uploadedByUser: 0 });
+  };
+
   useEffect(() => {
-    fetchData();
+    if (!user && !token) return;
+
+    const syncSession = async () => {
+      try {
+        const response = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!response.ok) {
+          setUser(null);
+          setToken('');
+          localStorage.removeItem('spotify-lite-token');
+          localStorage.removeItem('spotify-lite-user');
+          return;
+        }
+
+        const data = await response.json();
+        setUser(data.user);
+        localStorage.setItem('spotify-lite-user', JSON.stringify(data.user));
+      } catch {
+        setUser(null);
+        setToken('');
+      }
+    };
+
+    syncSession();
+  }, [token, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    fetchTracks(search);
     fetchPlaylists();
-  }, []);
+    fetchDashboard();
+  }, [user, search, token]);
+
+  useEffect(() => {
+    if (!user) {
+      setTracks([]);
+      setPlaylists([]);
+      setCurrentTrack(null);
+    }
+  }, [user]);
 
   const recentTracks = useMemo(() => tracks.slice(0, 5), [tracks]);
 
-  const handleLogin = async () => {
-    const response = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'demo-user' }),
-    });
-
-    const data = await response.json();
-    setUser({ name: data.user.name, plan: data.user.plan });
+  const handleAuthChange = (event) => {
+    const { name, value } = event.target;
+    setAuthForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSearch = (event) => {
-    const value = event.target.value;
-    setSearch(value);
-    if (!value.trim()) {
-      fetchData();
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault();
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(authForm),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Authentication failed.');
+      }
+
+      localStorage.setItem('spotify-lite-token', data.token);
+      localStorage.setItem('spotify-lite-user', JSON.stringify(data.user));
+      setToken(data.token);
+      setUser(data.user);
+      setAuthForm({ username: '', password: '' });
+      setStatus(`${authMode === 'login' ? 'Logged in' : 'Account created'} successfully.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('spotify-lite-token');
+    localStorage.removeItem('spotify-lite-user');
+    setToken('');
+    setUser(null);
+    setTracks([]);
+    setCurrentTrack(null);
+    setStatus('Logged out.');
+  };
+
+  const handleUploadSubmit = async (event) => {
+    event.preventDefault();
+    if (!user || !uploadFile) {
+      setStatus('Choose a music file first.');
       return;
     }
-    fetchData(value);
+
+    const formData = new FormData();
+    formData.append('file', uploadFile);
+    formData.append('title', uploadForm.title || uploadFile.name.replace(/\.[^/.]+$/, ''));
+    formData.append('artist', uploadForm.artist || 'Unknown Artist');
+    formData.append('album', uploadForm.album || 'Unknown Album');
+    formData.append('genre', uploadForm.genre || 'Uncategorized');
+
+    try {
+      const response = await fetch('/api/tracks/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Upload failed.');
+      }
+
+      setStatus('Track uploaded successfully.');
+      setUploadForm({ title: '', artist: '', album: '', genre: '' });
+      setUploadFile(null);
+      await fetchTracks(search);
+      await fetchDashboard();
+    } catch (error) {
+      setStatus(error.message);
+    }
   };
 
-  const handlePlayTrack = (track) => {
-    setCurrentTrack(track);
+  const handleSearch = async (event) => {
+    const value = event.target.value;
+    setSearch(value);
+    if (!user) return;
+    await fetchTracks(value);
   };
+
+  const playerTrack = currentTrack || tracks[0];
+
+  if (!user) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <div className="brand">Spotify Lite</div>
+          <div className="auth-toggle">
+            <button className={authMode === 'login' ? 'active' : ''} onClick={() => setAuthMode('login')}>Login</button>
+            <button className={authMode === 'register' ? 'active' : ''} onClick={() => setAuthMode('register')}>Register</button>
+          </div>
+
+          <form onSubmit={handleAuthSubmit} className="auth-form">
+            <label>
+              Username
+              <input name="username" value={authForm.username} onChange={handleAuthChange} placeholder="Enter username" />
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" value={authForm.password} onChange={handleAuthChange} placeholder="Enter password" />
+            </label>
+            <button type="submit" className="primary-button">
+              {authMode === 'login' ? 'Enter' : 'Create account'}
+            </button>
+          </form>
+
+          <div className="demo-box">
+            <strong>Demo admin</strong>
+            <span>Username: admin</span>
+            <span>Password: admin123</span>
+          </div>
+
+          {status && <p className="status-text">{status}</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -69,7 +244,7 @@ export default function App() {
           <button className="nav-item active">Home</button>
           <button className="nav-item">Search</button>
           <button className="nav-item">Library</button>
-          <button className="nav-item">Your Episodes</button>
+          <button className="nav-item">Discover</button>
         </nav>
 
         <div className="section-label">Playlists</div>
@@ -81,29 +256,83 @@ export default function App() {
             </div>
           ))}
         </div>
+
+        <div className="sidebar-footer">
+          <span>{user.username}</span>
+          <button className="secondary-button" onClick={handleLogout}>Logout</button>
+        </div>
       </aside>
 
       <main className="content">
         <header className="topbar">
           <div className="search-box">
-            <input
-              type="text"
-              value={search}
-              onChange={handleSearch}
-              placeholder="Search songs, albums, artists"
-            />
+            <input type="text" value={search} onChange={handleSearch} placeholder="Search songs, artists, albums..." />
           </div>
-          <button className="login-button" onClick={handleLogin}>
-            {user.name}
-          </button>
+          <div className="user-pill">{user.role === 'admin' ? 'Admin' : 'User'} · {user.username}</div>
         </header>
 
         <section className="hero-card">
           <div>
-            <p className="eyebrow">Curated for you</p>
+            <p className="eyebrow">Personalized</p>
             <h1>Good evening</h1>
           </div>
-          <span className="plan-pill">{user.plan} plan</span>
+          <div className="hero-stats">
+            <span>{stats.totalTracks} tracks</span>
+            <span>{stats.totalUsers} users</span>
+          </div>
+        </section>
+
+        <section className="quick-stats">
+          <div className="stat-box">
+            <span>Total library</span>
+            <strong>{stats.totalTracks}</strong>
+          </div>
+          <div className="stat-box">
+            <span>Your uploads</span>
+            <strong>{stats.uploadedByUser}</strong>
+          </div>
+          <div className="stat-box">
+            <span>Current plan</span>
+            <strong>{user.role === 'admin' ? 'Owner' : 'Premium'}</strong>
+          </div>
+        </section>
+
+        <section className="upload-panel">
+          <div className="section-header">
+            <h2>Upload local audio</h2>
+          </div>
+          <form onSubmit={handleUploadSubmit} className="upload-form">
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
+            />
+            <input
+              type="text"
+              placeholder="Title"
+              value={uploadForm.title}
+              onChange={(event) => setUploadForm((prev) => ({ ...prev, title: event.target.value }))}
+            />
+            <input
+              type="text"
+              placeholder="Artist"
+              value={uploadForm.artist}
+              onChange={(event) => setUploadForm((prev) => ({ ...prev, artist: event.target.value }))}
+            />
+            <input
+              type="text"
+              placeholder="Album"
+              value={uploadForm.album}
+              onChange={(event) => setUploadForm((prev) => ({ ...prev, album: event.target.value }))}
+            />
+            <input
+              type="text"
+              placeholder="Genre"
+              value={uploadForm.genre}
+              onChange={(event) => setUploadForm((prev) => ({ ...prev, genre: event.target.value }))}
+            />
+            <button type="submit" className="primary-button">Upload</button>
+          </form>
         </section>
 
         <section className="group">
@@ -112,8 +341,8 @@ export default function App() {
           </div>
           <div className="cards-row">
             {recentTracks.map((track) => (
-              <button className="track-card" key={track.id} onClick={() => handlePlayTrack(track)}>
-                <div className="cover" style={{ background: track.cover }}></div>
+              <button className="track-card" key={track.id} onClick={() => setCurrentTrack(track)}>
+                <div className="cover" style={{ background: track.cover || 'linear-gradient(135deg, #22c55e, #14b8a6, #0ea5e9)' }}></div>
                 <strong>{track.title}</strong>
                 <span>{track.artist}</span>
               </button>
@@ -138,17 +367,18 @@ export default function App() {
 
         <section className="group table-group">
           <div className="section-header">
-            <h2>Top songs</h2>
+            <h2>Library</h2>
           </div>
+
           {loading ? (
             <p className="loading-state">Loading tracks...</p>
           ) : (
             <div className="track-table">
               {tracks.map((track, index) => (
-                <div className="track-row" key={track.id} onClick={() => handlePlayTrack(track)}>
+                <div className="track-row" key={track.id} onClick={() => setCurrentTrack(track)}>
                   <span className="index">{index + 1}</span>
                   <div className="song-title">
-                    <div className="tiny-cover" style={{ background: track.cover }}></div>
+                    <div className="tiny-cover" style={{ background: track.cover || 'linear-gradient(135deg, #22c55e, #14b8a6, #0ea5e9)' }}></div>
                     <div>
                       <strong>{track.title}</strong>
                       <small>{track.artist}</small>
@@ -162,27 +392,27 @@ export default function App() {
             </div>
           )}
         </section>
+
+        {status && <p className="status-text">{status}</p>}
       </main>
 
       <footer className="player-bar">
         <div className="current-track">
-          <div className="tiny-cover" style={{ background: currentTrack?.cover || '#181818' }}></div>
+          <div className="tiny-cover" style={{ background: playerTrack?.cover || 'linear-gradient(135deg, #22c55e, #14b8a6, #0ea5e9)' }}></div>
           <div>
-            <strong>{currentTrack?.title || 'Choose a song'}</strong>
-            <small>{currentTrack?.artist || 'Demo artist'}</small>
+            <strong>{playerTrack?.title || 'Choose a song'}</strong>
+            <small>{playerTrack?.artist || 'Demo artist'}</small>
           </div>
         </div>
 
-        <div className="controls">
-          <button className="control-btn">⏮</button>
-          <button className="control-btn primary">▶</button>
-          <button className="control-btn">⏭</button>
+        <div className="audio-wrap">
+          <audio controls src={playerTrack?.src || ''} preload="metadata" />
         </div>
 
         <div className="volume">
           <span>Volume</span>
           <div className="volume-bar">
-            <span style={{ width: '68%' }}></span>
+            <span style={{ width: '72%' }}></span>
           </div>
         </div>
       </footer>
