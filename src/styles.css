@@ -1,0 +1,191 @@
+import { useEffect, useMemo, useState } from 'react';
+
+const formatTime = (seconds) => {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+};
+
+export default function App() {
+  const [user, setUser] = useState({ name: 'Guest', plan: 'Free' });
+  const [tracks, setTracks] = useState([]);
+  const [playlists, setPlaylists] = useState([]);
+  const [search, setSearch] = useState('');
+  const [currentTrack, setCurrentTrack] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = async (query = '') => {
+    setLoading(true);
+    const url = query ? `/api/search?q=${encodeURIComponent(query)}` : '/api/tracks';
+    const response = await fetch(url);
+    const data = await response.json();
+    setTracks(Array.isArray(data.tracks) ? data.tracks : []);
+    setLoading(false);
+  };
+
+  const fetchPlaylists = async () => {
+    const response = await fetch('/api/playlists');
+    const data = await response.json();
+    setPlaylists(data.playlists || []);
+  };
+
+  useEffect(() => {
+    fetchData();
+    fetchPlaylists();
+  }, []);
+
+  const recentTracks = useMemo(() => tracks.slice(0, 5), [tracks]);
+
+  const handleLogin = async () => {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'demo-user' }),
+    });
+
+    const data = await response.json();
+    setUser({ name: data.user.name, plan: data.user.plan });
+  };
+
+  const handleSearch = (event) => {
+    const value = event.target.value;
+    setSearch(value);
+    if (!value.trim()) {
+      fetchData();
+      return;
+    }
+    fetchData(value);
+  };
+
+  const handlePlayTrack = (track) => {
+    setCurrentTrack(track);
+  };
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">Spotify Lite</div>
+        <nav className="nav">
+          <button className="nav-item active">Home</button>
+          <button className="nav-item">Search</button>
+          <button className="nav-item">Library</button>
+          <button className="nav-item">Your Episodes</button>
+        </nav>
+
+        <div className="section-label">Playlists</div>
+        <div className="mini-list">
+          {playlists.slice(0, 5).map((playlist) => (
+            <div className="mini-item" key={playlist.id}>
+              <span>{playlist.name}</span>
+              <small>{playlist.tracks.length} tracks</small>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <main className="content">
+        <header className="topbar">
+          <div className="search-box">
+            <input
+              type="text"
+              value={search}
+              onChange={handleSearch}
+              placeholder="Search songs, albums, artists"
+            />
+          </div>
+          <button className="login-button" onClick={handleLogin}>
+            {user.name}
+          </button>
+        </header>
+
+        <section className="hero-card">
+          <div>
+            <p className="eyebrow">Curated for you</p>
+            <h1>Good evening</h1>
+          </div>
+          <span className="plan-pill">{user.plan} plan</span>
+        </section>
+
+        <section className="group">
+          <div className="section-header">
+            <h2>Recently played</h2>
+          </div>
+          <div className="cards-row">
+            {recentTracks.map((track) => (
+              <button className="track-card" key={track.id} onClick={() => handlePlayTrack(track)}>
+                <div className="cover" style={{ background: track.cover }}></div>
+                <strong>{track.title}</strong>
+                <span>{track.artist}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="group">
+          <div className="section-header">
+            <h2>Featured playlists</h2>
+          </div>
+          <div className="cards-row">
+            {playlists.map((playlist) => (
+              <div className="playlist-card" key={playlist.id}>
+                <div className="cover alt" style={{ background: playlist.cover }}></div>
+                <strong>{playlist.name}</strong>
+                <span>{playlist.description}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="group table-group">
+          <div className="section-header">
+            <h2>Top songs</h2>
+          </div>
+          {loading ? (
+            <p className="loading-state">Loading tracks...</p>
+          ) : (
+            <div className="track-table">
+              {tracks.map((track, index) => (
+                <div className="track-row" key={track.id} onClick={() => handlePlayTrack(track)}>
+                  <span className="index">{index + 1}</span>
+                  <div className="song-title">
+                    <div className="tiny-cover" style={{ background: track.cover }}></div>
+                    <div>
+                      <strong>{track.title}</strong>
+                      <small>{track.artist}</small>
+                    </div>
+                  </div>
+                  <span>{track.album}</span>
+                  <span>{track.genre}</span>
+                  <span>{formatTime(track.duration)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </main>
+
+      <footer className="player-bar">
+        <div className="current-track">
+          <div className="tiny-cover" style={{ background: currentTrack?.cover || '#181818' }}></div>
+          <div>
+            <strong>{currentTrack?.title || 'Choose a song'}</strong>
+            <small>{currentTrack?.artist || 'Demo artist'}</small>
+          </div>
+        </div>
+
+        <div className="controls">
+          <button className="control-btn">⏮</button>
+          <button className="control-btn primary">▶</button>
+          <button className="control-btn">⏭</button>
+        </div>
+
+        <div className="volume">
+          <span>Volume</span>
+          <div className="volume-bar">
+            <span style={{ width: '68%' }}></span>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
