@@ -1,41 +1,556 @@
-# spotify-lite
+* {
+  box-sizing: border-box;
+}
 
-Spotify-like music experience with a self-hosted backend, real authentication, and local audio uploads.
+:root {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #f5f5f5;
+  background: #080808;
+  line-height: 1.5;
+  font-weight: 400;
+}
 
-## Features
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: #080808;
+}
 
-- JWT-based authentication with signup/login
-- Local file upload for MP3/audio tracks
-- Real audio playback from uploaded files or preview URLs
-- Search by artist, album, title, or genre
-- Dashboard with stats and playlist views
-- SQLite persistence for users, tracks, and playlists
+body {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #121212 0%, #090909 15%, #090909 100%);
+}
 
-## Stack
+button,
+input,
+select {
+  font: inherit;
+}
 
-- Frontend: React + Vite
-- Backend: Node.js + Express
-- Database: SQLite
-- Auth: JWT + bcrypt
-- Uploads: Multer
+button {
+  cursor: pointer;
+}
 
-## Run locally
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at top, #1e1b4b 0%, #090909 50%);
+  padding: 24px;
+}
 
-```bash
-npm install
-npm run dev
-```
+.auth-card {
+  width: min(100%, 440px);
+  background: rgba(18, 18, 18, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.4);
+}
 
-Then open:
+.brand {
+  font-size: 2.2rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+  letter-spacing: -0.06em;
+}
 
-- Frontend: http://localhost:5173
-- API: http://localhost:4000/api/health
+.auth-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
 
-## Demo account
+.auth-toggle button,
+.nav-item,
+.primary-button,
+.secondary-button,
+.user-pill,
+.small-button,
+.icon-btn {
+  border-radius: 999px;
+}
 
-- Username: admin
-- Password: admin123
+.auth-toggle button {
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  padding: 10px 12px;
+  font-weight: 600;
+}
 
-## Notes
+.auth-toggle button.active,
+.primary-button {
+  background: #1ed760;
+  color: #08110d;
+}
 
-This app is intended as a self-hosted Spotify-style base. You can continue by adding favorites, artist pages, playlists, visualizers, or a better production deployment.
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+
+.auth-form input,
+.upload-form input,
+.sidebar-form input,
+.player-actions select {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: white;
+}
+
+.primary-button,
+.secondary-button,
+.small-button {
+  border: none;
+  padding: 12px 18px;
+  font-weight: 700;
+}
+
+.secondary-button,
+.small-button {
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+}
+
+.small-button {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.demo-box {
+  margin-top: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  color: #d6d6d6;
+}
+
+.status-text {
+  margin-top: 12px;
+  color: #d1fae5;
+  font-size: 0.9rem;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 110px;
+  min-height: 100vh;
+  background: #090909;
+}
+
+.sidebar {
+  grid-row: 1 / 2;
+  background: rgba(18, 18, 18, 0.9);
+  padding: 24px 18px;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 28px;
+  letter-spacing: -0.05em;
+}
+
+.nav {
+  display: grid;
+  gap: 10px;
+}
+
+.nav-item {
+  border: none;
+  text-align: left;
+  background: transparent;
+  color: #d9d9d9;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 600;
+}
+
+.nav-item.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.section-label {
+  margin-top: 28px;
+  color: #a8a8a8;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem;
+  margin-bottom: 12px;
+}
+
+.mini-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mini-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #d4d4d4;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.mini-item small {
+  color: #8d8d8d;
+}
+
+.sidebar-form {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 18px;
+}
+
+.content {
+  grid-column: 2;
+  padding: 22px 28px 24px;
+  overflow-y: auto;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.search-box {
+  flex: 1;
+}
+
+.search-box input {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.06);
+  border-radius: 999px;
+  padding: 12px 18px;
+  color: white;
+}
+
+.user-pill {
+  background: rgba(255,255,255,0.06);
+  padding: 10px 14px;
+  color: #f0f0f0;
+  font-size: 0.85rem;
+}
+
+.hero-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #4d1d91 0%, #1a5a8f 100%);
+  border-radius: 18px;
+  padding: 30px 28px;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.hero-card h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
+  letter-spacing: -0.07em;
+}
+
+.hero-stats {
+  display: flex;
+  gap: 14px;
+  font-weight: 600;
+}
+
+.quick-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 26px;
+}
+
+.stat-box {
+  background: rgba(255,255,255,0.025);
+  border-radius: 16px;
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stat-box span {
+  color: #bfbfbf;
+  font-size: 0.82rem;
+}
+
+.stat-box strong {
+  font-size: 1.8rem;
+}
+
+.upload-panel,
+.group {
+  margin-bottom: 24px;
+}
+
+.upload-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.section-header {
+  margin-bottom: 14px;
+}
+
+.section-header h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.cards-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px;
+}
+
+.track-card,
+.playlist-card,
+.artist-card {
+  border: none;
+  background: rgba(255,255,255,0.025);
+  padding: 14px;
+  border-radius: 16px;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.cover {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed, #ec4899);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+}
+
+.cover.alt {
+  background: linear-gradient(135deg, #fbbf24, #f97316, #ef4444);
+}
+
+.track-card strong,
+.playlist-card strong,
+.artist-card strong {
+  font-size: 1rem;
+}
+
+.track-card span,
+.playlist-card span,
+.artist-card span {
+  color: #b4b4b4;
+  font-size: 0.8rem;
+}
+
+.empty-state {
+  color: #d9d9d9;
+}
+
+.track-table {
+  display: grid;
+  gap: 10px;
+}
+
+.track-row {
+  display: grid;
+  grid-template-columns: 40px minmax(180px, 2fr) minmax(120px, 1fr) minmax(100px, 1fr) 60px 110px;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.02);
+  align-items: center;
+}
+
+.track-row:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.song-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tiny-cover {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #22c55e, #0ea5e9);
+  flex-shrink: 0;
+}
+
+.song-title strong,
+.song-title small {
+  display: block;
+}
+
+.song-title small {
+  color: #a5a5a5;
+}
+
+.index,
+.track-row span {
+  color: #d6d6d6;
+}
+
+.track-actions,
+.player-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  border: none;
+  background: rgba(255,255,255,0.08);
+  color: white;
+  width: 32px;
+  height: 32px;
+}
+
+.loading-state {
+  color: #d9d9d9;
+}
+
+.player-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(24,24,24,0.95);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding: 14px 26px;
+}
+
+.current-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.current-track strong,
+.current-track small {
+  display: block;
+}
+
+.current-track small {
+  color: #aaa;
+}
+
+.audio-wrap {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.audio-wrap audio {
+  width: min(100%, 560px);
+  max-width: 100%;
+}
+
+.player-actions {
+  min-width: 260px;
+  justify-content: flex-end;
+}
+
+.player-actions select {
+  max-width: 180px;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr 120px;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .content {
+    grid-column: 1;
+    padding: 18px 16px 24px;
+  }
+
+  .player-bar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .quick-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .track-row {
+    grid-template-columns: 40px minmax(0, 1fr) 1fr;
+  }
+
+  .track-row > :nth-child(3),
+  .track-row > :nth-child(4),
+  .track-row > :nth-child(5),
+  .track-row > :nth-child(6) {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .hero-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+

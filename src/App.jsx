@@ -75,13 +75,23 @@ const createSchema = () => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       description TEXT NOT NULL,
-      cover TEXT NOT NULL
+      cover TEXT NOT NULL,
+      owner_id INTEGER,
+      FOREIGN KEY(owner_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS playlist_tracks (
       playlist_id INTEGER NOT NULL,
       track_id INTEGER NOT NULL,
       FOREIGN KEY(playlist_id) REFERENCES playlists(id),
+      FOREIGN KEY(track_id) REFERENCES tracks(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS favorites (
+      user_id INTEGER NOT NULL,
+      track_id INTEGER NOT NULL,
+      PRIMARY KEY (user_id, track_id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(track_id) REFERENCES tracks(id)
     );
   `);
@@ -180,6 +190,33 @@ const demoTracks = [
     cover: 'linear-gradient(135deg, #a16207, #f59e0b, #facc15)',
     preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
   },
+  {
+    title: 'Glass Hearts',
+    artist: 'Cinder Echo',
+    album: 'Static Bloom',
+    genre: 'Alternative',
+    duration: 228,
+    cover: 'linear-gradient(135deg, #ec4899, #f43f5e, #fb7185)',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',
+  },
+  {
+    title: 'Sunset Avenue',
+    artist: 'Milo Hart',
+    album: 'Drive',
+    genre: 'R&B',
+    duration: 199,
+    cover: 'linear-gradient(135deg, #f97316, #fb7185, #fdba74)',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',
+  },
+  {
+    title: 'Northbound',
+    artist: 'Harbor Noire',
+    album: 'Night Signals',
+    genre: 'Ambient',
+    duration: 289,
+    cover: 'linear-gradient(135deg, #1f2937, #334155, #64748b)',
+    preview_url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
+  },
 ];
 
 const seedDemoTracks = () => {
@@ -219,7 +256,7 @@ const demoPlaylists = [
     name: 'Night Mode',
     description: 'Dark synths and cinematic ambience.',
     cover: 'linear-gradient(135deg, #7c3aed, #4338ca, #0f172a)',
-    trackIds: [3, 5, 4],
+    trackIds: [3, 5, 8],
   },
 ];
 
@@ -227,11 +264,12 @@ const ensurePlaylistSeeds = () => {
   const count = db.prepare('SELECT COUNT(*) AS count FROM playlists').get().count;
   if (count > 0) return;
 
-  const insertPlaylist = db.prepare('INSERT INTO playlists (id, name, description, cover) VALUES (?, ?, ?, ?)');
+  const insertPlaylist = db.prepare('INSERT INTO playlists (id, name, description, cover, owner_id) VALUES (?, ?, ?, ?, ?)');
   const insertTrack = db.prepare('INSERT INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)');
 
   demoPlaylists.forEach((playlist) => {
-    insertPlaylist.run(playlist.id, playlist.name, playlist.description, playlist.cover);
+    const admin = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+    insertPlaylist.run(playlist.id, playlist.name, playlist.description, playlist.cover, admin?.id || 1);
     playlist.trackIds.forEach((trackId) => insertTrack.run(playlist.id, trackId));
   });
 };
@@ -318,11 +356,12 @@ app.get('/api/search', (req, res) => {
   const query = String(req.query.q || '').trim();
 
   if (!query) {
-    return res.json({ tracks: db.prepare(`
+    const tracks = db.prepare(`
       SELECT t.*, u.username AS owner_name
       FROM tracks t LEFT JOIN users u ON u.id = t.owner_id
       ORDER BY t.id DESC
-    `).all().map(serializeTrack) });
+    `).all();
+    return res.json({ tracks: tracks.map(serializeTrack) });
   }
 
   const searchTerm = `%${query}%`;
@@ -340,7 +379,103 @@ app.get('/api/search', (req, res) => {
   res.json({ tracks: tracks.map(serializeTrack) });
 });
 
-app.get('/api/playlists', (_, res) => {
+app.get('/api/dashboard', authMiddleware, (req, res) => {
+  const totalTracks = db.prepare('SELECT COUNT(*) AS count FROM tracks').get().count;
+  const totalUsers = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
+  const uploadedByUser = db.prepare('SELECT COUNT(*) AS count FROM tracks WHERE owner_id = ?').get(req.user.id).count;
+
+  res.json({
+    stats: {
+      totalTracks,
+      totalUsers,
+      uploadedByUser,
+    },
+  });
+});
+
+app.get('/api/favorites', authMiddleware, (req, res) => {
+  const rows = db.prepare('SELECT track_id FROM favorites WHERE user_id = ? ORDER BY track_id ASC').all(req.user.id);
+  const favoriteIds = rows.map((row) => row.track_id);
+
+  let tracks = [];
+  if (favoriteIds.length > 0) {
+    const placeholders = favoriteIds.map(() => '?').join(',');
+    tracks = db.prepare(`
+      SELECT t.*, u.username AS owner_name
+      FROM tracks t
+      LEFT JOIN users u ON u.id = t.owner_id
+      WHERE t.id IN (${placeholders})
+      ORDER BY t.title ASC
+    `).all(...favoriteIds);
+  }
+
+  res.json({ favoriteIds, tracks: tracks.map(serializeTrack) });
+});
+
+app.post('/api/favorites/toggle', authMiddleware, (req, res) => {
+  const trackId = Number(req.body?.trackId);
+  if (!trackId) {
+    return res.status(400).json({ error: 'A valid track ID is required.' });
+  }
+
+  const exists = db.prepare('SELECT 1 FROM favorites WHERE user_id = ? AND track_id = ?').get(req.user.id, trackId);
+
+  if (exists) {
+    db.prepare('DELETE FROM favorites WHERE user_id = ? AND track_id = ?').run(req.user.id, trackId);
+    return res.json({ liked: false, favoriteIds: db.prepare('SELECT track_id FROM favorites WHERE user_id = ? ORDER BY track_id ASC').all(req.user.id).map((row) => row.track_id) });
+  }
+
+  db.prepare('INSERT INTO favorites (user_id, track_id) VALUES (?, ?)').run(req.user.id, trackId);
+  const favoriteIds = db.prepare('SELECT track_id FROM favorites WHERE user_id = ? ORDER BY track_id ASC').all(req.user.id).map((row) => row.track_id);
+  return res.json({ liked: true, favoriteIds });
+});
+
+app.post('/api/playlists', authMiddleware, (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const description = String(req.body?.description || '').trim() || 'Personal playlist';
+
+  if (!name) {
+    return res.status(400).json({ error: 'Playlist name is required.' });
+  }
+
+  const insert = db.prepare(`
+    INSERT INTO playlists (name, description, cover, owner_id)
+    VALUES (?, ?, ?, ?)
+  `);
+
+  const result = insert.run(name, description, 'linear-gradient(135deg, #22c55e, #14b8a6, #0ea5e9)', req.user.id);
+  const playlist = db.prepare('SELECT * FROM playlists WHERE id = ?').get(result.lastInsertRowid);
+
+  return res.status(201).json({ playlist });
+});
+
+app.post('/api/playlists/:playlistId/tracks', authMiddleware, (req, res) => {
+  const playlistId = Number(req.params.playlistId);
+  const trackId = Number(req.body?.trackId);
+
+  if (!playlistId || !trackId) {
+    return res.status(400).json({ error: 'Playlist and track are required.' });
+  }
+
+  const playlist = db.prepare('SELECT * FROM playlists WHERE id = ?').get(playlistId);
+  if (!playlist) {
+    return res.status(404).json({ error: 'Playlist not found.' });
+  }
+
+  if (playlist.owner_id !== null && playlist.owner_id !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'You are not allowed to modify this playlist.' });
+  }
+
+  const exists = db.prepare('SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?').get(playlistId, trackId);
+  if (exists) {
+    return res.status(200).json({ added: false, message: 'Track already exists in playlist.' });
+  }
+
+  db.prepare('INSERT INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)').run(playlistId, trackId);
+  return res.status(201).json({ added: true });
+});
+
+app.get('/api/playlists', (req, res) => {
   const playlists = db.prepare('SELECT * FROM playlists ORDER BY id ASC').all();
   const withTracks = playlists.map((playlist) => {
     const tracks = db.prepare(`
@@ -357,20 +492,6 @@ app.get('/api/playlists', (_, res) => {
   });
 
   res.json({ playlists: withTracks });
-});
-
-app.get('/api/dashboard', authMiddleware, (_, res) => {
-  const totalTracks = db.prepare('SELECT COUNT(*) AS count FROM tracks').get().count;
-  const totalUsers = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-  const uploadedByUser = db.prepare('SELECT COUNT(*) AS count FROM tracks WHERE owner_id = ?').get(req.user.id).count;
-
-  res.json({
-    stats: {
-      totalTracks,
-      totalUsers,
-      uploadedByUser,
-    },
-  });
 });
 
 app.post('/api/tracks/upload', authMiddleware, upload.single('file'), (req, res) => {

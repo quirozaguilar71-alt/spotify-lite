@@ -25,6 +25,7 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [tracks, setTracks] = useState([]);
   const [playlists, setPlaylists] = useState([]);
+  const [favoriteIds, setFavoriteIds] = useState([]);
   const [search, setSearch] = useState('');
   const [currentTrack, setCurrentTrack] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +33,8 @@ export default function App() {
   const [stats, setStats] = useState({ totalTracks: 0, totalUsers: 0, uploadedByUser: 0 });
   const [uploadForm, setUploadForm] = useState({ title: '', artist: '', album: '', genre: '' });
   const [uploadFile, setUploadFile] = useState(null);
+  const [playlistName, setPlaylistName] = useState('');
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
 
   const fetchTracks = async (query = '') => {
     setLoading(true);
@@ -53,6 +56,28 @@ export default function App() {
     const response = await fetch('/api/playlists');
     const data = await response.json();
     setPlaylists(data.playlists || []);
+
+    if (data.playlists && data.playlists.length > 0 && !selectedPlaylistId) {
+      setSelectedPlaylistId(String(data.playlists[0].id));
+    }
+  };
+
+  const fetchFavorites = async () => {
+    if (!token) {
+      setFavoriteIds([]);
+      return;
+    }
+
+    const response = await fetch('/api/favorites', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    setFavoriteIds(data.favoriteIds || []);
   };
 
   const fetchDashboard = async () => {
@@ -92,24 +117,39 @@ export default function App() {
     };
 
     syncSession();
-  }, [token, user]);
+  }, [token]);
 
   useEffect(() => {
-    if (!user) return;
-    fetchTracks(search);
-    fetchPlaylists();
-    fetchDashboard();
+    if (user) {
+      fetchTracks(search);
+      fetchPlaylists();
+      fetchFavorites();
+      fetchDashboard();
+    }
   }, [user, search, token]);
 
   useEffect(() => {
     if (!user) {
       setTracks([]);
       setPlaylists([]);
+      setFavoriteIds([]);
       setCurrentTrack(null);
     }
   }, [user]);
 
   const recentTracks = useMemo(() => tracks.slice(0, 5), [tracks]);
+  const favoriteTracks = useMemo(
+    () => tracks.filter((track) => favoriteIds.includes(track.id)),
+    [tracks, favoriteIds]
+  );
+  const artistCards = useMemo(() => {
+    const uniqueArtists = [...new Set(tracks.map((track) => track.artist))];
+    return uniqueArtists.slice(0, 4).map((artist, index) => ({
+      id: index,
+      label: artist,
+      cover: ['linear-gradient(135deg, #0ea5e9, #8b5cf6, #ec4899)', 'linear-gradient(135deg, #f97316, #facc15, #84cc16)', 'linear-gradient(135deg, #ef4444, #f43f5e, #8b5cf6)', 'linear-gradient(135deg, #14b8a6, #06b6d4, #3b82f6)'][index % 4],
+    }));
+  }, [tracks]);
 
   const handleAuthChange = (event) => {
     const { name, value } = event.target;
@@ -186,6 +226,7 @@ export default function App() {
       setUploadFile(null);
       await fetchTracks(search);
       await fetchDashboard();
+      await fetchFavorites();
     } catch (error) {
       setStatus(error.message);
     }
@@ -196,6 +237,69 @@ export default function App() {
     setSearch(value);
     if (!user) return;
     await fetchTracks(value);
+  };
+
+  const handleToggleFavorite = async (trackId) => {
+    if (!token) return;
+    const response = await fetch('/api/favorites/toggle', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ trackId }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      setStatus(data.error || 'Could not update favorite.');
+      return;
+    }
+
+    setFavoriteIds(data.favoriteIds || []);
+    setStatus(data.liked ? 'Added to favorites.' : 'Removed from favorites.');
+  };
+
+  const handleCreatePlaylist = async (event) => {
+    event.preventDefault();
+    if (!playlistName.trim()) {
+      setStatus('Create a playlist name first.');
+      return;
+    }
+
+    const response = await fetch('/api/playlists', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name: playlistName, description: 'Created from your library' }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      setStatus(data.error || 'Could not create playlist.');
+      return;
+    }
+
+    setStatus(`Playlist "${data.playlist.name}" created.`);
+    setPlaylistName('');
+    await fetchPlaylists();
+  };
+
+  const handleAddToPlaylist = async (playlistId, trackId) => {
+    const response = await fetch(`/api/playlists/${playlistId}/tracks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ trackId }),
+    });
+
+    const data = await response.json();
+    setStatus(data.added ? 'Track added to playlist.' : data.message || 'No change.');
+    await fetchPlaylists();
   };
 
   const playerTrack = currentTrack || tracks[0];
@@ -257,6 +361,16 @@ export default function App() {
           ))}
         </div>
 
+        <form className="sidebar-form" onSubmit={handleCreatePlaylist}>
+          <input
+            type="text"
+            placeholder="New playlist name"
+            value={playlistName}
+            onChange={(event) => setPlaylistName(event.target.value)}
+          />
+          <button type="submit" className="secondary-button">Create</button>
+        </form>
+
         <div className="sidebar-footer">
           <span>{user.username}</span>
           <button className="secondary-button" onClick={handleLogout}>Logout</button>
@@ -273,7 +387,7 @@ export default function App() {
 
         <section className="hero-card">
           <div>
-            <p className="eyebrow">Personalized</p>
+            <p className="eyebrow">For you</p>
             <h1>Good evening</h1>
           </div>
           <div className="hero-stats">
@@ -337,6 +451,40 @@ export default function App() {
 
         <section className="group">
           <div className="section-header">
+            <h2>Artist spotlight</h2>
+          </div>
+          <div className="cards-row">
+            {artistCards.map((artist) => (
+              <div className="artist-card" key={artist.id}>
+                <div className="cover" style={{ background: artist.cover }}></div>
+                <strong>{artist.label}</strong>
+                <span>Featured artist</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="group">
+          <div className="section-header">
+            <h2>Favorites</h2>
+          </div>
+          <div className="cards-row">
+            {favoriteTracks.length === 0 ? (
+              <p className="empty-state">No favorite tracks yet.</p>
+            ) : (
+              favoriteTracks.slice(0, 4).map((track) => (
+                <button className="track-card" key={track.id} onClick={() => setCurrentTrack(track)}>
+                  <div className="cover" style={{ background: track.cover || 'linear-gradient(135deg, #22c55e, #14b8a6, #0ea5e9)' }}></div>
+                  <strong>{track.title}</strong>
+                  <span>{track.artist}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="group">
+          <div className="section-header">
             <h2>Recently played</h2>
           </div>
           <div className="cards-row">
@@ -375,7 +523,7 @@ export default function App() {
           ) : (
             <div className="track-table">
               {tracks.map((track, index) => (
-                <div className="track-row" key={track.id} onClick={() => setCurrentTrack(track)}>
+                <div className="track-row" key={track.id}>
                   <span className="index">{index + 1}</span>
                   <div className="song-title">
                     <div className="tiny-cover" style={{ background: track.cover || 'linear-gradient(135deg, #22c55e, #14b8a6, #0ea5e9)' }}></div>
@@ -387,6 +535,13 @@ export default function App() {
                   <span>{track.album}</span>
                   <span>{track.genre}</span>
                   <span>{formatTime(track.duration)}</span>
+                  <div className="track-actions">
+                    <button className="icon-btn" onClick={() => setCurrentTrack(track)}>▶</button>
+                    <button className="icon-btn" onClick={() => handleToggleFavorite(track.id)}>{favoriteIds.includes(track.id) ? '♥' : '♡'}</button>
+                    {selectedPlaylistId && (
+                      <button className="icon-btn" onClick={() => handleAddToPlaylist(Number(selectedPlaylistId), track.id)}>+</button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -406,14 +561,17 @@ export default function App() {
         </div>
 
         <div className="audio-wrap">
-          <audio controls src={playerTrack?.src || ''} preload="metadata" />
+          <audio key={playerTrack?.id || 'empty'} controls src={playerTrack?.src || ''} preload="metadata" />
         </div>
 
-        <div className="volume">
-          <span>Volume</span>
-          <div className="volume-bar">
-            <span style={{ width: '72%' }}></span>
-          </div>
+        <div className="player-actions">
+          <button className="icon-btn" onClick={() => playerTrack && handleToggleFavorite(playerTrack.id)}>{favoriteIds.includes(playerTrack?.id) ? '♥' : '♡'}</button>
+          <select value={selectedPlaylistId} onChange={(event) => setSelectedPlaylistId(event.target.value)}>
+            {playlists.map((playlist) => (
+              <option key={playlist.id} value={String(playlist.id)}>{playlist.name}</option>
+            ))}
+          </select>
+          <button className="small-button" onClick={() => playerTrack && handleAddToPlaylist(Number(selectedPlaylistId), playerTrack.id)}>Save</button>
         </div>
       </footer>
     </div>
